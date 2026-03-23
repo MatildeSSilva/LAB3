@@ -86,12 +86,12 @@ def volt_to_pixel_y(v, v_scale):
     """Convert a voltage value to a y pixel coordinate on the grid.
 
     The grid has 6 vertical divisions. With centre = 0V:
-      top    of grid ->  +v_scale * 3  Volts  -> y = TOP_BAR (top of screen)
-      centre of grid ->   0 V          -> y = TOP_BAR + GRID_H/2
-      bottom of grid ->  -v_scale * 3  Volts  -> y = TOP_BAR + GRID_H - 1
+      top    of grid ->  +v_scale * 3  Volts  -> y = GRID_H - 1 = 118
+      centre of grid ->   0 V          -> y = GRID_H / 2 ~ 59
+      bottom of grid ->  -v_scale * 3  Volts  -> y = 0
 
-    In the TFT coordinate system y=0 is at the TOP of the screen,
-    so a higher voltage maps to a SMALLER y value.
+    In the TFT coordinate system y=0 is at the BOTTOM of the screen,
+    so a higher voltage maps to a LARGER y value (closer to top).
     """
     v_full  = v_scale * N_DIV_V          # full vertical range in Volts
     v_half  = v_full / 2.0               # half range (= top voltage)
@@ -99,12 +99,12 @@ def volt_to_pixel_y(v, v_scale):
     # Clamp voltage to the visible range
     v = max(-v_half, min(v_half, v))
 
-    # Map: v = +v_half -> y = TOP_BAR
-    #       v = -v_half -> y = TOP_BAR + GRID_H - 1
-    pixel_y = TOP_BAR + int((v_half - v) / v_full * GRID_H)
+    # Map: v = +v_half -> y = GRID_H - 1 (top of grid)
+    #      v = -v_half -> y = 0           (bottom of grid)
+    pixel_y = int((v + v_half) / v_full * (GRID_H - 1))
 
     # Keep within grid bounds
-    pixel_y = max(TOP_BAR, min(TOP_BAR + GRID_H - 1, pixel_y))
+    pixel_y = max(0, min(GRID_H - 1, pixel_y))
     return pixel_y
 
 
@@ -153,9 +153,10 @@ def draw_screen(tft, fft_mode=False):
     tft.display_set(tft.BLACK, 0, 0, DISPLAY_W, DISPLAY_H)
 
     # Step 2: draw the grid
-    # Grid occupies x=0..239, y=TOP_BAR..134  (119 pixels tall)
+    # Grid occupies x=0..239, y=0..118 (119 pixels tall, bottom of display)
+    # Top bar (text + WiFi) occupies y=119..134
     # Centre lines shown only in time domain mode
-    tft.display_write_grid(0, TOP_BAR, GRID_W, GRID_H,
+    tft.display_write_grid(0, 0, GRID_W, GRID_H,
                            N_DIV_H, N_DIV_V,
                            not fft_mode,       # centre lines on/off
                            tft.GREY1, tft.GREY2)
@@ -264,9 +265,9 @@ def draw_fft(tft, xss, v_scale):
         # Clamp to visible range
         val = min(val, v_fft_max)
 
-        # Map amplitude to pixel y (0 at bottom = TOP_BAR + GRID_H - 1)
-        pixel_y = TOP_BAR + GRID_H - 1 - int(val / v_fft_max * (GRID_H - 1))
-        pixel_y = max(TOP_BAR, min(TOP_BAR + GRID_H - 1, pixel_y))
+        # Map amplitude to pixel y: 0 at bottom (y=0), max at top (y=GRID_H-1)
+        pixel_y = int(val / v_fft_max * (GRID_H - 1))
+        pixel_y = max(0, min(GRID_H - 1, pixel_y))
 
         # Each spectrum value maps to 2 pixels (pixel doubling)
         x_list.append(2 * k)
