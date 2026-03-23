@@ -49,4 +49,4 @@ while tft.working():                              # Ciclo principal do programa
             read_and_display()
         if but==21:                               # Button 2 click - Envia mail
             tft.send_mail(0.2/240,pontos_volt,"Lista de 240 pontos em 0.2 segundos.",
-                          "pvitor@kvl.pt")
+                          "matilde.s.silva@tecnico.ulisboa.pt")
