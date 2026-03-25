@@ -19,9 +19,9 @@ def media_amostras(num_amostras):
 
     # Escreve valores no display
     tft.display_write_str(tft.Arial16, "media", width +5, 90)
-    tft.display_write_str(tft.Arial16, "%d" % num_amostras, width +5, 70)
+    tft.display_write_str(tft.Arial16, "%d" % media, width +5, 70)
     tft.display_write_str(tft.Arial16, "amostras", width +5, 50)
-    tft.display_write_str(tft.Arial16, "%.2f" % media, width +5, 30)
+    tft.display_write_str(tft.Arial16, "%.2f" % num_amostras, width +5, 30)
 
 # Programa principal (main)
 tft = T_Display.TFT()                              # Instancia um objeto da classe TFT
