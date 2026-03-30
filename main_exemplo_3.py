@@ -1,120 +1,133 @@
 # ============================================================
-# LAB3b - µOscilloscope - Versão Final Melhorada
-# Funcionalidades: Auto-Set, Trigger, Hold, Freq, Vpp, Email
+# LAB3b - Oscilloscope - Versão Simplificada (Sem FFT)
 # ============================================================
 
 import T_Display
 import math
+import gc
 import time
 
-# --- Configurações de Ecrã e ADC ---
+# --- Configurações do Display e ADC (Mantidas do teu original) ---
 DISPLAY_W = 240
 DISPLAY_H = 135
-FATOR_DIVISOR = 1/29.3
-ADC_GAIN = 0.00044028
+TOP_BAR   = 16
+GRID_H    = DISPLAY_H - TOP_BAR
+N_POINTS  = 240
+
+ADC_GAIN   = 0.00044028
 ADC_OFFSET = 0.091455
+FATOR      = 1.0 / 29.3
+V_REF      = 1.0
 
-# --- Variáveis de Controlo Global ---
-ganho_v = 15.0      # Pixéis por Volt (ajustado pelo Auto-Set)
-hold_mode = False   # Estado do congelamento de ecrã
-trigger_on = True   # Estado da estabilização de imagem
-pontos_volt = [0.0] * 240
-EMAIL = "teu_email@tecnico.ulisboa.pt"
+# Escalas Verticais
+V_SCALES = [1, 2, 5, 10]
+V_IDX    = 2  # Começa em 5V/div
 
+H_INTERVALS = [50, 100, 200, 500]    # matching read_adc() intervals (ms)
+H_IDX = 1  # Começa em 100ms/div
+# Estado Global
+pontos_volt = [0.0] * N_POINTS
 tft = T_Display.TFT()
 
-def converter_v(adc_val):
-    """Converte valor bruto do ADC para Tensão Real (V)"""
-    v = ADC_GAIN * adc_val + ADC_OFFSET
-    return (v - 1) / FATOR_DIVISOR
-
-def process_data():
-    """Lê o ADC, faz cálculos e deteta o ponto de Trigger"""
+# --- Funções de Conversão e Desenho ---
+def read_and_convert(tft):
     global pontos_volt
-    # Lê 240 pontos em 100ms (ajustável para mudar a escala H)
-    buffer_adc = tft.read_adc(240, 100)
-    pontos_volt = [converter_v(p) for p in buffer_adc]
-    
-    v_max = max(pontos_volt)
-    v_min = min(pontos_volt)
-    vpp = v_max - v_min
-    
-    # Procura ponto de Trigger (Zero-crossing ascendente)
-    start_idx = 0
-    if trigger_on:
-        for i in range(1, 120):
-            if pontos_volt[i-1] < 0 and pontos_volt[i] >= 0:
-                start_idx = i
-                break
-                
-    # Cálculo de Frequência (baseado no tempo entre ciclos)
-    freq = 0
-    for i in range(start_idx + 5, 239):
-        if pontos_volt[i-1] < 0 and pontos_volt[i] >= 0:
-            periodo_pontos = i - start_idx
-            periodo_seg = periodo_pontos * (0.1 / 240) # 100ms / 240 pts
-            freq = 1 / periodo_seg
-            break
-            
-    return start_idx, vpp, freq
+    interval = H_INTERVALS[H_IDX]
+    raw = tft.read_adc(N_POINTS, interval)
+    for i in range(N_POINTS):
+        pontos_volt[i] = adc_to_volt(raw[i])
+    gc.collect()
+    return pontos_volt
 
-def update_display(start_idx, vpp, freq):
-    """Desenha a interface e a forma de onda"""
-    tft.display_set(tft.BLACK, 0, 0, 240, 135)
+def adc_to_volt(d):
+    v_adc = ADC_GAIN * d + ADC_OFFSET
+    return (v_adc - V_REF) / FATOR
+
+def volt_to_pixel_y(v, v_scale):
+    v_full = v_scale * 6.0  # 6 divisões verticais
+    v_half = v_full / 2.0
+    v = max(-v_half, min(v_half, v))
+    # Mapeia para a área da grelha (GRID_H = 119)
+    return int((v + v_half) / v_full * (GRID_H - 1))
+
+def draw_screen_base():
+    """Desenha a base: Fundo, Grelha e Texto de Escala"""
+    tft.display_set(tft.BLACK, 0, 0, DISPLAY_W, DISPLAY_H)
+    tft.display_write_grid(0, 0, DISPLAY_W, GRID_H, 10, 6, True, tft.GREY1, tft.GREY2)
     
-    # Desenha Grelha (Área de sinal: 170px de largura)
-    tft.display_write_grid(0, 0, 170, 135, 6, 6, True)
+    # Texto da Escala no Topo
+    v_text = "%dV/div" % V_SCALES[V_IDX]
+    tft.display_write_str(tft.Arial16, v_text, 5, DISPLAY_H - TOP_BAR)
+    tft.set_wifi_icon(DISPLAY_W - 16, DISPLAY_H - 16)
+
+def auto_scale():
+    """Escolhe a melhor escala V/div (V_IDX) para o sinal atual."""
+    global V_IDX
+    # Encontra o maior valor (pico) para saber quanto espaço a onda ocupa
+    v_max_abs = 0
+    for v in pontos_volt:
+        if abs(v) > v_max_abs:
+            v_max_abs = abs(v)
     
-    # Desenha a Onda
-    for x in range(169):
-        idx = start_idx + x
-        if idx < 240:
-            # Centro do ecrã (67px) - (Tensão * Escala)
-            y = int(67 - (pontos_volt[idx] * ganho_v))
-            if 0 < y < 135:
-                tft.display_pixel(x, y, tft.YELLOW)
-                
-    # Painel Lateral de Informações
-    tft.display_write_str(tft.Arial16, "Vpp:%.1fV" % vpp, 175, 110)
-    tft.display_write_str(tft.Arial16, "f:%dHz" % freq, 175, 85)
+    # O ecrã tem 6 divisões (+3 e -3). 
+    # Testamos qual escala (1, 2, 5, 10) acomoda o v_max_abs
+    for i in range(len(V_SCALES)):
+        if v_max_abs < (V_SCALES[i] * 3):
+            V_IDX = i
+            break
+    else:
+        V_IDX = len(V_SCALES) - 1 # Se for muito grande, usa a escala máxima
+
+def full_refresh():
+    """Lê ADC e atualiza todo o ecrã"""
+    global pontos_volt
+    draw_screen_base()
     
-    # Indicadores de Estado
-    trg_status = "TRG:ON" if trigger_on else "TRG:OFF"
-    run_status = "HOLD" if hold_mode else "RUN"
-    tft.display_write_str(tft.Arial16, trg_status, 175, 50)
-    tft.display_write_str(tft.Arial16, run_status, 175, 20)
+    # Leitura (Intervalo fixo de 100ms para estabilidade)
+    raw = tft.read_adc(N_POINTS, 100)
+    for i in range(N_POINTS):
+        pontos_volt[i] = adc_to_volt(raw[i])
     
-    tft.set_wifi_icon(220, 120)
+    # Desenho da Onda
+    x_list = list(range(N_POINTS))
+    y_list = [volt_to_pixel_y(v, V_SCALES[V_IDX]) for v in pontos_volt]
+    tft.display_nline(tft.YELLOW, x_list, y_list)
+    
+    gc.collect()
+
+# --- Execução Inicial ---
+full_refresh()
 
 # --- Loop Principal ---
 while tft.working():
     but = tft.readButton()
 
-    # BOTÃO 1 CURTO: Auto-Set (Ajusta escala vertical)
+    if but == tft.NOTHING:
+        # Se quiseres que ele atualize continuamente, retira o 'continue' 
+        # e coloca o full_refresh() aqui.
+        continue
+
+    # BOTÃO 1: Nova Leitura (Refresh manual)
     if but == tft.BUTTON1_SHORT:
-        hold_mode = False
-        _, vpp_now, _ = process_data()
-        if vpp_now > 0.1:
-            ganho_v = 100.0 / vpp_now # Otimiza para ocupar 100px
-        time.sleep(0.1)
-
-    # BOTÃO 1 LONGO: Enviar Email
-    elif but == tft.BUTTON1_LONG:
-        tft.display_write_str(tft.Arial16, "Enviando...", 10, 10)
-        tft.send_mail(pontos_volt, "Dados uOscilloscope", EMAIL)
-        time.sleep(0.5)
-
-    # BOTÃO 2 CURTO: Hold / Run
+        full_refresh()
+    
+    # Button 1 long -> Nova leitura COM Auto-Set
+    if but == tft.BUTTON1_LONG:
+        read_and_convert(tft)  # 1. Lê os dados novos
+        auto_scale()           # 2. Calcula a melhor escala para esses dados
+        full_refresh()         # 3. Desenha tudo com a nova escala
+        
+    # Button 2 short -> Mantém a mudança manual (opcional)
     elif but == tft.BUTTON2_SHORT:
-        hold_mode = not hold_mode
-        time.sleep(0.1)
+        V_IDX = (V_IDX + 1) % len(V_SCALES)
+        full_refresh()
 
-    # BOTÃO 2 LONGO: Trigger ON / OFF
+    # BOTÃO 2: Muda Escala Vertical (Cíclico: 1, 2, 5, 10)
     elif but == tft.BUTTON2_LONG:
-        trigger_on = not trigger_on
-        time.sleep(0.2)
+        V_IDX = (V_IDX + 1) % len(V_SCALES)
+        full_refresh()
+        time.sleep(0.1) # Debounce
 
-    # Atualização contínua se não estiver em HOLD
-    if not hold_mode:
-        s_idx, v_pp, f_hz = process_data()
-        update_display(s_idx, v_pp, f_hz)
+
+
+    

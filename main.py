@@ -324,7 +324,7 @@ def send_email(tft, volts, h_idx, address):
 # ============================================================
 
 # --- Your email address for sending data from the IoT module ---
-EMAIL = "your_email@tecnico.ulisboa.pt"
+EMAIL = "margarida.sebastiao@tecnico.ulisboa.pt"
 
 # Instantiate the TFT object (connects to display + buttons)
 tft = T_Display.TFT()
