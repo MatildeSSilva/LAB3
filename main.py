@@ -4,6 +4,7 @@
 # ============================================================
 
 import T_Display
+import arial_16
 import math
 import gc
 
@@ -168,28 +169,32 @@ def draw_screen(tft, fft_mode=False):
     tft.set_wifi_icon(DISPLAY_W - 16, DISPLAY_H - 16)
 
 
+def str_pixel_width(text):
+    """Return the total pixel width of a string using the Arial16 font."""
+    total = 0
+    for ch in text:
+        _, _, w = arial_16.get_ch(ch)
+        total += w
+    return total
+
+
 def draw_scales_text(tft, fft_mode=False):
     """Write current scale values in the 16-pixel top bar.
-    Time mode:  "5V/  10ms/"
-    FFT mode:   "2.5V/  240Hz/"
+    Layout: V text at left | ms (or Hz) text centred | WiFi icon at right
     """
-    # Clear only the top bar area
+    # Clear only the top bar area (leave 16px on right for WiFi icon)
     tft.display_set(tft.BLACK, 0, DISPLAY_H - TOP_BAR, DISPLAY_W - 16, TOP_BAR)
 
     v_scale = V_SCALES[V_IDX]
     h_scale = H_SCALES[H_IDX]
 
     if not fft_mode:
-        # Time domain: show V/div and ms/div
-        text = "%dV/ %dms/" % (v_scale, h_scale)
+        v_str = "%dV/" % v_scale
+        h_str = "%dms/" % h_scale
     else:
-        # FFT mode: vertical scale is double (always positive spectrum)
-        # Horizontal scale comes from Nyquist: fs/2 divided by 10 divisions
-        # fs depends on the horizontal interval chosen
-        fs = N_POINTS / (H_INTERVALS[H_IDX] / 1000.0)   # samples per second
+        fs = N_POINTS / (H_INTERVALS[H_IDX] / 1000.0)
         hz_per_div = (fs / 2.0) / N_DIV_H
-        v_fft = v_scale / 2.0   # double scale for FFT (0.5, 1, 2.5, 5)
-        # Format neatly: avoid showing e.g. "2.500000"
+        v_fft = v_scale / 2.0
         if v_fft == int(v_fft):
             v_str = "%dV/" % int(v_fft)
         else:
@@ -198,9 +203,17 @@ def draw_scales_text(tft, fft_mode=False):
             h_str = "%dHz/" % int(hz_per_div)
         else:
             h_str = "%.0fHz/" % hz_per_div
-        text = v_str + " " + h_str
 
-    tft.display_write_str(tft.Arial16, text, 2, DISPLAY_H - TOP_BAR)
+    bar_y = DISPLAY_H - TOP_BAR   # top y of the bar in display coords
+
+    # Left: V text
+    tft.display_write_str(tft.Arial16, v_str, 2, bar_y)
+
+    # Centre: ms/Hz text  (centred in the area left of the WiFi icon)
+    usable_w = DISPLAY_W - 16          # pixels available (excluding WiFi)
+    h_w = str_pixel_width(h_str)
+    h_x = (usable_w - h_w) // 2
+    tft.display_write_str(tft.Arial16, h_str, h_x, bar_y)
 
 
 # ============================================================
