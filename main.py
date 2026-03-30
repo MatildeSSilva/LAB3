@@ -3,6 +3,8 @@
 # main.py
 # ============================================================
 
+from time import time
+
 import T_Display
 import arial_16
 import math
@@ -318,9 +320,59 @@ def send_email(tft, volts, h_idx, address):
     tft.send_mail(delta_t, volts, body, address)
     gc.collect()
 
-
 # ============================================================
-# SECTION 5 - MAIN PROGRAM
+# SECTION 5 - EXTRAS: AUTO-SCALE AND FULL REFRESH
+# ============================================================
+
+# --- Funções de Auto-Escala ---
+
+def auto_scale_v():
+    global V_IDX
+    v_max_abs = max([abs(v) for v in pontos_volt])
+    for i in range(len(V_SCALES)):
+        if v_max_abs < (V_SCALES[i] * 3):
+            V_IDX = i
+            break
+    else: V_IDX = len(V_SCALES) - 1
+
+def auto_scale_h(freq):
+    global H_IDX
+    if freq <= 0: return
+    periodo_ms = (1.0 / freq) * 1000
+    tempo_ideal_total = periodo_ms * 2 
+    escala_ideal_div = tempo_ideal_total / 10 
+    
+    best_idx = 0
+    min_diff = 9999
+    for i, scale in enumerate(H_SCALES):
+        diff = abs(scale - escala_ideal_div)
+        if diff < min_diff:
+            min_diff = diff
+            best_idx = i
+    H_IDX = best_idx
+
+def get_signal_info():
+    """Calcula Vpp e Frequência baseada no valor médio."""
+    v_max = max(pontos_volt)
+    v_min = min(pontos_volt)
+    vpp = v_max - v_min
+    v_media = (v_max + v_min) / 2
+    
+    crossings = []
+    for i in range(1, len(pontos_volt)):
+        if pontos_volt[i-1] < v_media and pontos_volt[i] >= v_media:
+            crossings.append(i)
+    
+    freq = 0
+    if len(crossings) >= 2:
+        pts_per_cycle = crossings[1] - crossings[0]
+        t_total_sec = H_INTERVALS[H_IDX] / 1000.0
+        periodo = pts_per_cycle * (t_total_sec / N_POINTS)
+        if periodo > 0: freq = 1.0 / periodo
+                
+    return vpp, freq
+# ============================================================
+# SECTION 6 - MAIN PROGRAM
 # ============================================================
 
 # --- Your email address for sending data from the IoT module ---
@@ -353,7 +405,12 @@ while tft.working():
 
     # Button 1 short -> new waveform reading
     if but == tft.BUTTON1_SHORT:
-        full_refresh()
+        read_and_convert(tft)
+        limite = V_SCALES[V_IDX] * 3
+        if max(pontos_volt) > limite or min(pontos_volt) < -limite:
+            full_refresh("Scale", tft.RED) # Abreviação para caber melhor
+        else:
+            full_refresh()
 
     # Button 1 long -> send email with current data
     elif but == tft.BUTTON1_LONG:
@@ -377,3 +434,16 @@ while tft.working():
         draw_fft(tft, xss, V_SCALES[V_IDX])
         del xss
         gc.collect()
+
+    elif but == tft.BUTTON1_TCLICK:
+        full_refresh("AUTO ON", tft.GREEN)
+        time.sleep(0.4)
+        
+        read_and_convert(tft)
+        vpp, freq = get_signal_info()
+        
+        auto_scale_v()
+        auto_scale_h(freq)
+        
+        read_and_convert(tft)
+        full_refresh()
