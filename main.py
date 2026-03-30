@@ -323,54 +323,55 @@ def send_email(tft, volts, h_idx, address):
 # ============================================================
 # SECTION 5 - EXTRAS: AUTO-SCALE AND FULL REFRESH
 # ============================================================
+def get_signal_info():
+    """Calcula a frequência para sinais rápidos e lentos."""
+    v_max, v_min = max(pontos_volt), min(pontos_volt)
+    vpp = v_max - v_min
+    
+    # Se o sinal for quase linha reta, ignora
+    if vpp < 0.2: return 0
+    
+    v_media = (v_max + v_min) / 2
+    # Encontra pontos onde a onda cruza a média subindo
+    crossings = []
+    for i in range(1, N_POINTS):
+        if pontos_volt[i-1] < v_media and pontos_volt[i] >= v_media:
+            crossings.append(i)
+    
+    if len(crossings) >= 2:
+        # pts_per_cycle = distância entre dois cruzamentos
+        pts_per_cycle = crossings[1] - crossings[0]
+        # Tempo de um ponto em segundos
+        t_ponto = (H_INTERVALS[H_IDX] / 1000.0) / N_POINTS
+        periodo = pts_per_cycle * t_ponto
+        return 1.0 / periodo
+    return 0
 
-# --- Funções de Auto-Escala ---
+def auto_scale_h(freq):
+    global H_IDX
+    if freq <= 0:
+        # Se não detetar freq, volta para a escala intermédia
+        H_IDX = 1
+        return
+
+    # Alvo: Ver 2 períodos em 10 divisões (ecrã total)
+    # tempo_total_necessario = 2 * (1/freq) * 1000 ms
+    t_total_ms = (2.0 / freq) * 1000
+    
+    # Escolhe o H_INTERVAL (50, 100, 200, 500) mais próximo do necessário
+    if t_total_ms <= 75:    H_IDX = 0 # 5ms/div (50ms total)
+    elif t_total_ms <= 150: H_IDX = 1 # 10ms/div (100ms total)
+    elif t_total_ms <= 350: H_IDX = 2 # 20ms/div (200ms total)
+    else:                   H_IDX = 3 # 50ms/div (500ms total)
 
 def auto_scale_v():
     global V_IDX
     v_max_abs = max([abs(v) for v in pontos_volt])
-    for i in range(len(V_SCALES)):
-        if v_max_abs < (V_SCALES[i] * 3):
+    for i, scale in enumerate(V_SCALES):
+        # Queremos que o pico caiba em 3 divisões (metade do ecrã)
+        if v_max_abs < (scale * 3):
             V_IDX = i
             break
-    else: V_IDX = len(V_SCALES) - 1
-
-def auto_scale_h(freq):
-    global H_IDX
-    if freq <= 0: return
-    periodo_ms = (1.0 / freq) * 1000
-    tempo_ideal_total = periodo_ms * 2 
-    escala_ideal_div = tempo_ideal_total / 10 
-    
-    best_idx = 0
-    min_diff = 9999
-    for i, scale in enumerate(H_SCALES):
-        diff = abs(scale - escala_ideal_div)
-        if diff < min_diff:
-            min_diff = diff
-            best_idx = i
-    H_IDX = best_idx
-
-def get_signal_info():
-    """Calcula Vpp e Frequência baseada no valor médio."""
-    v_max = max(pontos_volt)
-    v_min = min(pontos_volt)
-    vpp = v_max - v_min
-    v_media = (v_max + v_min) / 2
-    
-    crossings = []
-    for i in range(1, len(pontos_volt)):
-        if pontos_volt[i-1] < v_media and pontos_volt[i] >= v_media:
-            crossings.append(i)
-    
-    freq = 0
-    if len(crossings) >= 2:
-        pts_per_cycle = crossings[1] - crossings[0]
-        t_total_sec = H_INTERVALS[H_IDX] / 1000.0
-        periodo = pts_per_cycle * (t_total_sec / N_POINTS)
-        if periodo > 0: freq = 1.0 / periodo
-                
-    return vpp, freq
 # ============================================================
 # SECTION 6 - MAIN PROGRAM
 # ============================================================
@@ -385,13 +386,34 @@ tft = T_Display.TFT()
 V_IDX = 2    # 5 V/div at startup
 H_IDX = 1    # 10 ms/div at startup
 
-def full_refresh():
-    """Full cycle: draw screen, read ADC, draw waveform."""
+def full_refresh(msg="", color=0):
+    """
+    CICLO COMPLETO ORIGINAL:
+    1. Reset modo FFT
+    2. Desenha Grelha e Escalas (draw_screen)
+    3. Lê ADC e converte (read_and_convert) <- REPOSTO AQUI
+    4. Desenha a onda (draw_waveform)
+    5. Escreve mensagem extra se existir
+    """
     global pontos_volt, modo_fft
     modo_fft = False
+    
+    # 1 & 2. Limpa e desenha base
     draw_screen(tft, fft_mode=False)
+    
+    # 3. LER DADOS (Como no teu original)
     read_and_convert(tft)
+    
+    # 4. Desenhar onda
     draw_waveform(tft, pontos_volt, V_SCALES[V_IDX])
+    
+    # 5. Mensagem no canto superior direito
+    if msg:
+        tft.display_write_str(tft.Arial16, msg, 140, DISPLAY_H - TOP_BAR, color)
+    
+    gc.collect()
+
+
 
 # --- Initial reading on startup ---
 full_refresh()
@@ -405,10 +427,9 @@ while tft.working():
 
     # Button 1 short -> new waveform reading
     if but == tft.BUTTON1_SHORT:
-        read_and_convert(tft)
         limite = V_SCALES[V_IDX] * 3
         if max(pontos_volt) > limite or min(pontos_volt) < -limite:
-            full_refresh("Scale", tft.RED) # Abreviação para caber melhor
+            full_refresh("SCALE!", tft.RED)
         else:
             full_refresh()
 
@@ -435,15 +456,18 @@ while tft.working():
         del xss
         gc.collect()
 
-    elif but == tft.BUTTON1_TCLICK:
-        full_refresh("AUTO ON", tft.GREEN)
-        time.sleep(0.4)
+    # Botão 1 Triplo Clique: AUTO-SET
+    if but == tft.BUTTON1_DCLICK:
+        # PASSO 1: Forçar escala lenta (50ms/div) para detetar frequências baixas
+        H_IDX = 3 
+        full_refresh("SCANNING", tft.GREEN)
         
-        read_and_convert(tft)
-        vpp, freq = get_signal_info()
+        # PASSO 2: Analisar a frequência capturada na varredura lenta
+        f = get_signal_info()
         
+        # PASSO 3: Ajustar escalas baseadas no sinal detetado
         auto_scale_v()
-        auto_scale_h(freq)
+        auto_scale_h(f)
         
-        read_and_convert(tft)
-        full_refresh()
+        # PASSO 4: Refresh final com as escalas ideais
+        full_refresh("AUTO OK", tft.GREEN)
