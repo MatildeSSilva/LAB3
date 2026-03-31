@@ -456,7 +456,7 @@ while tft.working():
         del xss
         gc.collect()
 
-    # Botão 1 Triplo Clique: AUTO-SET
+    # Botão 1 Duplo Clique: AUTO-SET
     if but == tft.BUTTON1_DCLICK:
         # PASSO 1: Forçar escala lenta (50ms/div) para detetar frequências baixas
         H_IDX = 3 
